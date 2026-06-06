@@ -8,10 +8,9 @@ Usage:
 
 import sys
 import time
-import ctypes
 import os
+import platform
 import configparser
-from ctypes import wintypes
 import markdown
 from markdown.extensions.tables import TableExtension
 from markdown.extensions.fenced_code import FencedCodeExtension
@@ -24,126 +23,224 @@ _config = configparser.ConfigParser()
 _config.read(_CONFIG_PATH)
 
 FONT_SIZE = _config.getint("style", "font_size", fallback=11)
-FONT_FAMILY = _config.get("style", "font_family", fallback="Calibri, sans-serif")
+FONT_FAMILY = _config.get("style", "font_family", fallback="Aptos, Calibri, sans-serif")
 CODE_FONT_FAMILY = _config.get("style", "code_font_family", fallback="Consolas, Courier New, monospace")
 CODE_FONT_SIZE = _config.getint("style", "code_font_size", fallback=10)
+CONTENT_BOX = _config.getboolean("style", "content_box", fallback=True)
 
-# Win32 clipboard API via ctypes (thread-safe)
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+IS_WINDOWS = platform.system() == "Windows"
+IS_MACOS = platform.system() == "Darwin"
 
-OpenClipboard = user32.OpenClipboard
-OpenClipboard.argtypes = [wintypes.HWND]
-OpenClipboard.restype = wintypes.BOOL
+# ─── Platform-specific clipboard implementation ───────────────────────────────
 
-CloseClipboard = user32.CloseClipboard
-CloseClipboard.argtypes = []
-CloseClipboard.restype = wintypes.BOOL
+if IS_WINDOWS:
+    import ctypes
+    from ctypes import wintypes
 
-EmptyClipboard = user32.EmptyClipboard
-EmptyClipboard.argtypes = []
-EmptyClipboard.restype = wintypes.BOOL
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
 
-SetClipboardData = user32.SetClipboardData
-SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
-SetClipboardData.restype = wintypes.HANDLE
+    _OpenClipboard = user32.OpenClipboard
+    _OpenClipboard.argtypes = [wintypes.HWND]
+    _OpenClipboard.restype = wintypes.BOOL
 
-GetClipboardData = user32.GetClipboardData
-GetClipboardData.argtypes = [wintypes.UINT]
-GetClipboardData.restype = wintypes.HANDLE
+    _CloseClipboard = user32.CloseClipboard
+    _CloseClipboard.argtypes = []
+    _CloseClipboard.restype = wintypes.BOOL
 
-IsClipboardFormatAvailable = user32.IsClipboardFormatAvailable
-IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
-IsClipboardFormatAvailable.restype = wintypes.BOOL
+    _EmptyClipboard = user32.EmptyClipboard
+    _EmptyClipboard.argtypes = []
+    _EmptyClipboard.restype = wintypes.BOOL
 
-RegisterClipboardFormatW = user32.RegisterClipboardFormatW
-RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
-RegisterClipboardFormatW.restype = wintypes.UINT
+    _SetClipboardData = user32.SetClipboardData
+    _SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    _SetClipboardData.restype = wintypes.HANDLE
 
-GlobalAlloc = kernel32.GlobalAlloc
-GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-GlobalAlloc.restype = wintypes.HANDLE
+    _GetClipboardData = user32.GetClipboardData
+    _GetClipboardData.argtypes = [wintypes.UINT]
+    _GetClipboardData.restype = wintypes.HANDLE
 
-GlobalLock = kernel32.GlobalLock
-GlobalLock.argtypes = [wintypes.HANDLE]
-GlobalLock.restype = ctypes.c_void_p
+    _IsClipboardFormatAvailable = user32.IsClipboardFormatAvailable
+    _IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    _IsClipboardFormatAvailable.restype = wintypes.BOOL
 
-GlobalUnlock = kernel32.GlobalUnlock
-GlobalUnlock.argtypes = [wintypes.HANDLE]
-GlobalUnlock.restype = wintypes.BOOL
+    _RegisterClipboardFormatW = user32.RegisterClipboardFormatW
+    _RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+    _RegisterClipboardFormatW.restype = wintypes.UINT
 
-GMEM_MOVEABLE = 0x0002
-CF_UNICODETEXT = 13
+    _GlobalAlloc = kernel32.GlobalAlloc
+    _GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    _GlobalAlloc.restype = wintypes.HANDLE
 
+    _GlobalLock = kernel32.GlobalLock
+    _GlobalLock.argtypes = [wintypes.HANDLE]
+    _GlobalLock.restype = ctypes.c_void_p
 
-# Inline CSS that works well in OneNote, Outlook, Word
-STYLE = """\
-<style>
-body { font-family: Calibri, Segoe UI, sans-serif; font-size: 11pt; line-height: 1.5; color: #1a1a1a; }
-h1 { font-size: 18pt; font-weight: bold; margin: 12pt 0 6pt 0; color: #1a1a1a; }
-h2 { font-size: 15pt; font-weight: bold; margin: 10pt 0 5pt 0; color: #1a1a1a; }
-h3 { font-size: 12pt; font-weight: bold; margin: 8pt 0 4pt 0; color: #1a1a1a; }
-h4 { font-size: 11pt; font-weight: bold; margin: 6pt 0 3pt 0; color: #1a1a1a; }
-code { font-family: Consolas, Courier New, monospace; font-size: 10pt; background-color: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
-pre { font-family: Consolas, Courier New, monospace; font-size: 10pt; background-color: #f4f4f4; padding: 8pt; border-radius: 4px; border: 1px solid #e0e0e0; overflow-x: auto; white-space: pre-wrap; }
-pre code { background-color: transparent; padding: 0; }
-blockquote { border-left: 3px solid #0078d4; margin: 6pt 0; padding: 4pt 12pt; color: #444; background-color: #f8f9fa; }
-table { border-collapse: collapse; margin: 8pt 0; }
-th, td { border: 1px solid #c0c0c0; padding: 4pt 8pt; text-align: left; }
-th { background-color: #f0f0f0; font-weight: bold; }
-ul, ol { margin: 4pt 0; padding-left: 24pt; }
-li { margin: 2pt 0; }
-a { color: #0078d4; }
-hr { border: none; border-top: 1px solid #d0d0d0; margin: 12pt 0; }
-strong { font-weight: bold; }
-em { font-style: italic; }
-</style>
-"""
+    _GlobalUnlock = kernel32.GlobalUnlock
+    _GlobalUnlock.argtypes = [wintypes.HANDLE]
+    _GlobalUnlock.restype = wintypes.BOOL
 
+    GMEM_MOVEABLE = 0x0002
+    CF_UNICODETEXT = 13
 
-def _open_clipboard(retries=10, delay=0.05):
-    """Open clipboard with retries (handles thread contention)."""
-    for i in range(retries):
-        if OpenClipboard(None):
-            return True
-        time.sleep(delay)
-    return False
+    def _open_clipboard_win(retries=10, delay=0.05):
+        for i in range(retries):
+            if _OpenClipboard(None):
+                return True
+            time.sleep(delay)
+        return False
 
+    def _alloc_global(data: bytes):
+        h = _GlobalAlloc(GMEM_MOVEABLE, len(data))
+        if not h:
+            raise MemoryError("GlobalAlloc failed")
+        ptr = _GlobalLock(h)
+        if not ptr:
+            raise MemoryError("GlobalLock failed")
+        ctypes.memmove(ptr, data, len(data))
+        _GlobalUnlock(h)
+        return h
 
-def _alloc_global(data: bytes):
-    """Allocate a GMEM_MOVEABLE block and copy data into it."""
-    h = GlobalAlloc(GMEM_MOVEABLE, len(data))
-    if not h:
-        raise MemoryError("GlobalAlloc failed")
-    ptr = GlobalLock(h)
-    if not ptr:
-        raise MemoryError("GlobalLock failed")
-    ctypes.memmove(ptr, data, len(data))
-    GlobalUnlock(h)
-    return h
-
-
-def get_clipboard_text():
-    """Get plain text from clipboard."""
-    if not _open_clipboard():
+    def get_clipboard_text():
+        if not _open_clipboard_win():
+            return None
+        try:
+            if _IsClipboardFormatAvailable(CF_UNICODETEXT):
+                h = _GetClipboardData(CF_UNICODETEXT)
+                if h:
+                    ptr = _GlobalLock(h)
+                    if ptr:
+                        text = ctypes.wstring_at(ptr)
+                        _GlobalUnlock(h)
+                        return text
+        finally:
+            _CloseClipboard()
         return None
-    try:
-        if IsClipboardFormatAvailable(CF_UNICODETEXT):
-            h = GetClipboardData(CF_UNICODETEXT)
-            if h:
-                ptr = GlobalLock(h)
-                if ptr:
-                    text = ctypes.wstring_at(ptr)
-                    GlobalUnlock(h)
-                    return text
-    finally:
-        CloseClipboard()
-    return None
+
+    def set_clipboard_html(html, plain_text):
+        cf_html_fmt = _RegisterClipboardFormatW("HTML Format")
+        html_bytes = make_cf_html(html)
+        if not _open_clipboard_win():
+            raise RuntimeError("Could not open clipboard after retries.")
+        try:
+            _EmptyClipboard()
+            h_html = _alloc_global(html_bytes)
+            if not _SetClipboardData(cf_html_fmt, h_html):
+                raise RuntimeError(f"SetClipboardData HTML failed, error={ctypes.GetLastError()}")
+            text_bytes = (plain_text + "\0").encode("utf-16-le")
+            h_text = _alloc_global(text_bytes)
+            if not _SetClipboardData(CF_UNICODETEXT, h_text):
+                raise RuntimeError(f"SetClipboardData text failed, error={ctypes.GetLastError()}")
+        finally:
+            _CloseClipboard()
+
+elif IS_MACOS:
+    import subprocess
+
+    def get_clipboard_text():
+        try:
+            result = subprocess.run(
+                ["pbpaste"], capture_output=True, text=True, timeout=5
+            )
+            return result.stdout if result.returncode == 0 else None
+        except Exception:
+            return None
+
+    def set_clipboard_html(html, plain_text):
+        """Set macOS clipboard with HTML (public.html) and plain text via AppleScript + pbcopy."""
+        # Use osascript to set both HTML and plain text on the pasteboard
+        # This is the most reliable way without PyObjC
+        applescript = f'''
+use framework "AppKit"
+set theHTML to "{_escape_applescript(html)}"
+set theText to "{_escape_applescript(plain_text)}"
+set pb to current application's NSPasteboard's generalPasteboard()
+pb's clearContents()
+pb's setString:theHTML forType:(current application's NSPasteboardType's NSHTMLPboardType)
+pb's setString:theText forType:(current application's NSPasteboardType's NSStringPboardType)
+'''
+        # AppleScript has string length limits; use a temp file approach instead
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+            f.write(html)
+            html_path = f.name
+        try:
+            # Use hexdump + osascript for reliable HTML pasteboard setting
+            script = f'''
+set htmlData to (read POSIX file "{html_path}" as «class utf8»)
+set pb to current application's NSPasteboard's generalPasteboard()
+pb's clearContents()
+pb's setString:htmlData forType:"public.html"
+pb's setString:"{_escape_applescript(plain_text)}" forType:"public.utf8-plain-text"
+'''
+            subprocess.run(
+                ["osascript", "-l", "AppleScript", "-e",
+                 'use framework "AppKit"', "-e", script],
+                capture_output=True, timeout=10,
+            )
+        finally:
+            os.unlink(html_path)
+
+    def _escape_applescript(s):
+        """Escape a string for AppleScript."""
+        return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+
+else:
+    # Linux / other — use xclip if available
+    import subprocess
+
+    def get_clipboard_text():
+        try:
+            result = subprocess.run(
+                ["xclip", "-selection", "clipboard", "-o"],
+                capture_output=True, text=True, timeout=5
+            )
+            return result.stdout if result.returncode == 0 else None
+        except Exception:
+            return None
+
+    def set_clipboard_html(html, plain_text):
+        """Set clipboard HTML via xclip."""
+        try:
+            proc = subprocess.Popen(
+                ["xclip", "-selection", "clipboard", "-t", "text/html"],
+                stdin=subprocess.PIPE
+            )
+            proc.communicate(html.encode("utf-8"))
+        except FileNotFoundError:
+            raise RuntimeError("xclip not found. Install with: sudo apt install xclip")
+
+
+def _preprocess_md(md_text):
+    """Enhance markdown before conversion: detect informal headers (lines ending with colon)."""
+    import re
+    lines = md_text.splitlines()
+    result = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Standalone short line ending with ':' → make it bold (informal header)
+        # Must not be inside a list, not already bold, and reasonably short
+        if (stripped.endswith(':') and
+                len(stripped) <= 80 and
+                not stripped.startswith(('#', '-', '*', '+', '>', '`')) and
+                not re.match(r'^\d+\.', stripped) and
+                not stripped.startswith('**')):
+            # Check it's a standalone paragraph (blank line before or start of doc)
+            prev_blank = (i == 0 or not lines[i-1].strip())
+            if prev_blank:
+                result.append(f'**{stripped}**')
+                continue
+        result.append(line)
+    return '\n'.join(result)
 
 
 def md_to_html(md_text):
     """Convert markdown to styled HTML with inline styles for Office compatibility."""
     import re as _re
+
+    # Pre-process: enhance informal headers
+    md_text = _preprocess_md(md_text)
+
     extensions = [
         TableExtension(),
         FencedCodeExtension(),
@@ -213,6 +310,16 @@ def md_to_html(md_text):
         flags=_re.DOTALL,
     )
 
+    # Optionally wrap entire content in a bordered box (like ChatGPT's card UI)
+    if CONTENT_BOX:
+        html_body = (
+            f'<table style="border-collapse:collapse;margin:4pt 0;width:100%;"><tr>'
+            f'<td style="border:1px solid #d0d0d0;padding:12pt 16pt;border-radius:6px;'
+            f'font-family:{ff};font-size:{sz}pt;line-height:1.5;">'
+            f'{html_body}'
+            f'</td></tr></table>'
+        )
+
     html = f"<html><body>{html_body}</body></html>"
     return html
 
@@ -259,28 +366,6 @@ def make_cf_html(html):
     )
 
     return (header + html_with_markers).encode("utf-8") + b"\0"
-
-
-def set_clipboard_html(html, plain_text):
-    """Set clipboard with both HTML and plain text formats."""
-    cf_html_fmt = RegisterClipboardFormatW("HTML Format")
-    html_bytes = make_cf_html(html)
-
-    if not _open_clipboard():
-        raise RuntimeError("Could not open clipboard after retries.")
-    try:
-        EmptyClipboard()
-        # Set HTML format (rich)
-        h_html = _alloc_global(html_bytes)
-        if not SetClipboardData(cf_html_fmt, h_html):
-            raise RuntimeError(f"SetClipboardData HTML failed, error={ctypes.GetLastError()}")
-        # Also keep plain text as fallback
-        text_bytes = (plain_text + "\0").encode("utf-16-le")
-        h_text = _alloc_global(text_bytes)
-        if not SetClipboardData(CF_UNICODETEXT, h_text):
-            raise RuntimeError(f"SetClipboardData text failed, error={ctypes.GetLastError()}")
-    finally:
-        CloseClipboard()
 
 
 def looks_like_markdown(text):
@@ -351,6 +436,7 @@ def convert_clipboard():
 
 def run_tray():
     """Run as system tray icon."""
+    import threading
     import pystray
     from PIL import Image, ImageDraw, ImageFont
 
@@ -372,60 +458,87 @@ def run_tray():
     def on_quit(icon, item):
         icon.stop()
 
-    # Register global hotkey (Ctrl+Alt+M) via Win32 API
-    import threading
+    # Platform-specific global hotkey registration
+    hotkey_label = ""
 
-    MOD_CONTROL = 0x0002
-    MOD_ALT = 0x0001
-    MOD_NOREPEAT = 0x4000
-    VK_M = 0x4D
-    HOTKEY_ID = 1
-    WM_HOTKEY = 0x0312
+    if IS_WINDOWS:
+        import ctypes
+        from ctypes import wintypes
 
-    # MSG structure for GetMessage
-    class MSG(ctypes.Structure):
-        _fields_ = [
-            ("hwnd", wintypes.HWND),
-            ("message", wintypes.UINT),
-            ("wParam", wintypes.WPARAM),
-            ("lParam", wintypes.LPARAM),
-            ("time", wintypes.DWORD),
-            ("pt", wintypes.POINT),
-        ]
+        MOD_CONTROL = 0x0002
+        MOD_ALT = 0x0001
+        MOD_NOREPEAT = 0x4000
+        VK_M = 0x4D
+        HOTKEY_ID = 1
+        WM_HOTKEY = 0x0312
 
-    def hotkey_listener():
-        """Listen for global hotkey in a separate thread."""
-        RegisterHotKey = user32.RegisterHotKey
-        RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
-        RegisterHotKey.restype = wintypes.BOOL
+        class MSG(ctypes.Structure):
+            _fields_ = [
+                ("hwnd", wintypes.HWND),
+                ("message", wintypes.UINT),
+                ("wParam", wintypes.WPARAM),
+                ("lParam", wintypes.LPARAM),
+                ("time", wintypes.DWORD),
+                ("pt", wintypes.POINT),
+            ]
 
-        GetMessageW = user32.GetMessageW
-        GetMessageW.argtypes = [ctypes.POINTER(MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
-        GetMessageW.restype = wintypes.BOOL
+        def hotkey_listener():
+            RegisterHotKey = user32.RegisterHotKey
+            RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
+            RegisterHotKey.restype = wintypes.BOOL
+            GetMessageW = user32.GetMessageW
+            GetMessageW.argtypes = [ctypes.POINTER(MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+            GetMessageW.restype = wintypes.BOOL
 
-        if not RegisterHotKey(None, HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_M):
-            print("Warning: Could not register Ctrl+Alt+M hotkey (may be in use).")
-            return
+            if not RegisterHotKey(None, HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_M):
+                print("Warning: Could not register Ctrl+Alt+M hotkey (may be in use).")
+                return
+            print("Global hotkey: Ctrl+Alt+M")
+            msg = MSG()
+            while GetMessageW(ctypes.byref(msg), None, 0, 0):
+                if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
+                    convert_clipboard()
 
-        print("Global hotkey: Ctrl+Alt+M")
-        msg = MSG()
-        while GetMessageW(ctypes.byref(msg), None, 0, 0):
-            if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
-                convert_clipboard()
+        threading.Thread(target=hotkey_listener, daemon=True).start()
+        hotkey_label = " (Ctrl+Alt+M)"
 
-    hotkey_thread = threading.Thread(target=hotkey_listener, daemon=True)
-    hotkey_thread.start()
+    elif IS_MACOS:
+        # On macOS, suggest using system Automator/Shortcuts for a global hotkey,
+        # or use pynput if installed
+        try:
+            from pynput import keyboard
+
+            HOTKEY_COMBO = {keyboard.Key.cmd, keyboard.Key.alt, keyboard.KeyCode.from_char('m')}
+            current_keys = set()
+
+            def on_press(key):
+                current_keys.add(key)
+                if HOTKEY_COMBO.issubset(current_keys):
+                    convert_clipboard()
+
+            def on_release(key):
+                current_keys.discard(key)
+
+            listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+            listener.daemon = True
+            listener.start()
+            hotkey_label = " (Cmd+Opt+M)"
+            print("Global hotkey: Cmd+Opt+M")
+        except ImportError:
+            print("Tip: Install 'pynput' for global hotkey support on macOS.")
+            print("  pip install pynput")
+            hotkey_label = ""
 
     icon = pystray.Icon(
         "md2clip",
         create_icon_image(),
-        "MD → Clipboard (Ctrl+Alt+M)",
+        f"MD → Clipboard{hotkey_label}",
         menu=pystray.Menu(
-            pystray.MenuItem("Convert Clipboard (Ctrl+Alt+M)", on_convert, default=True),
+            pystray.MenuItem(f"Convert Clipboard{hotkey_label}", on_convert, default=True),
             pystray.MenuItem("Quit", on_quit),
         ),
     )
-    print("md2clip tray icon running. Ctrl+Alt+M to convert, or double-click icon.")
+    print(f"md2clip tray icon running.{hotkey_label} to convert, or double-click icon.")
     icon.run()
 
 

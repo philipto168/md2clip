@@ -2,3 +2,5 @@ markdown>=3.5
 pygments>=2.17
 pystray>=0.19
 Pillow>=10.0
+# Optional: for global hotkey on macOS (Cmd+Opt+M)
+# pynput>=1.7
