@@ -23,8 +23,8 @@ _config = configparser.ConfigParser()
 _config.read(_CONFIG_PATH)
 
 FONT_SIZE = _config.getint("style", "font_size", fallback=11)
-FONT_FAMILY = _config.get("style", "font_family", fallback="Aptos, Calibri, sans-serif")
-CODE_FONT_FAMILY = _config.get("style", "code_font_family", fallback="Consolas, Courier New, monospace")
+FONT_FAMILY = _config.get("style", "font_family", fallback="Aptos, SF Pro, Helvetica Neue, Calibri, sans-serif")
+CODE_FONT_FAMILY = _config.get("style", "code_font_family", fallback="Consolas, Menlo, Courier New, monospace")
 CODE_FONT_SIZE = _config.getint("style", "code_font_size", fallback=10)
 CONTENT_BOX = _config.getboolean("style", "content_box", fallback=True)
 
